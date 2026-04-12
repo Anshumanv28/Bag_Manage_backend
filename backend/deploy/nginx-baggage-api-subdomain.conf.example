@@ -1,0 +1,50 @@
+# Copy to the server (e.g. /etc/nginx/sites-available/baggage-api), adjust server_name,
+# then: sudo nginx -t && sudo systemctl reload nginx
+#
+# Prerequisites:
+# - Backend listens on 127.0.0.1:3040 (HOST=127.0.0.1 PORT=3040)
+# - DNS A/AAAA record: api.yourdomain.com -> this server's public IP
+# - TLS certs (example paths below are typical Certbot nginx layout)
+
+# Redirect HTTP -> HTTPS
+server {
+    listen 80;
+    listen [::]:80;
+    server_name api.example.com;
+
+    location /.well-known/acme-challenge/ {
+        root /var/www/html;
+    }
+
+    location / {
+        return 301 https://$host$request_uri;
+    }
+}
+
+server {
+    listen 443 ssl http2;
+    listen [::]:443 ssl http2;
+    server_name api.example.com;
+
+    # Certbot (or your CA) — replace paths after cert issuance
+    ssl_certificate     /etc/letsencrypt/live/api.example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/api.example.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    # If this file exists on your host, uncomment (some Certbot setups omit it):
+    # ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    client_max_body_size 10m;
+
+    location / {
+        proxy_pass http://127.0.0.1:3040;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header Connection "";
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 60s;
+        proxy_read_timeout 60s;
+    }
+}
