@@ -1,0 +1,80 @@
+generator client {
+  provider = "prisma-client-js"
+  binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
+}
+
+enum BookingStatus {
+  active
+  complete
+}
+
+model Operator {
+  phone         String @id
+  name          String
+  passwordHash  String @map("password_hash")
+
+  refreshTokens    RefreshToken[]
+  depositBookings  Booking[] @relation("BookingDepositOperator")
+  returnBookings   Booking[] @relation("BookingReturnOperator")
+  syncEvents       SyncEvent[]
+
+  @@map("operators")
+}
+
+model Booking {
+  id               String        @id @default(uuid()) @db.Uuid
+  candidateId      String        @map("candidate_id")
+  rackId           String        @map("rack_id")
+  operatorId       String        @map("operator_id")
+  returnOperatorId String?       @map("return_operator_id")
+  status           BookingStatus @default(active)
+  createdAt        DateTime      @default(now()) @map("created_at")
+  updatedAt        DateTime      @updatedAt @map("updated_at")
+  completedAt      DateTime?     @map("completed_at")
+
+  operator       Operator  @relation("BookingDepositOperator", fields: [operatorId], references: [phone])
+  returnOperator Operator? @relation("BookingReturnOperator", fields: [returnOperatorId], references: [phone])
+
+  @@index([rackId])
+  @@index([status])
+  @@index([candidateId])
+  @@map("bookings")
+}
+
+model RefreshToken {
+  id         String   @id @default(uuid()) @db.Uuid
+  operatorId String   @map("operator_id")
+  tokenHash  String   @map("token_hash")
+  expiresAt  DateTime @map("expires_at")
+  revokedAt  DateTime? @map("revoked_at")
+  createdAt  DateTime @default(now()) @map("created_at")
+  lastUsedAt DateTime? @map("last_used_at")
+
+  operator Operator @relation(fields: [operatorId], references: [phone])
+
+  @@index([operatorId])
+  @@map("refresh_tokens")
+}
+
+model SyncEvent {
+  id            String   @id @default(uuid()) @db.Uuid
+  operatorId    String   @map("operator_id")
+  deviceId      String   @map("device_id")
+  mutationCount Int      @map("mutation_count")
+  okCount       Int      @map("ok_count")
+  errorCount    Int      @map("error_count")
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  operator Operator @relation(fields: [operatorId], references: [phone])
+
+  @@index([operatorId])
+  @@index([createdAt])
+  @@map("sync_events")
+}
+

@@ -1,0 +1,92 @@
+# =========================
+# Root .gitignore
+# Stack: Node (TS/Fastify) + Prisma + Postgres + Flutter (Dart) + Docker
+# OS: Windows
+# =========================
+
+# --- Environment / secrets ---
+.env
+.env.*
+!.env.example
+
+# --- Logs ---
+logs/
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# --- Node.js ---
+node_modules/
+dist/
+build/
+coverage/
+.nyc_output/
+.cache/
+
+# TypeScript incremental build info
+*.tsbuildinfo
+
+# Vite / Next / general tooling caches (safe even if unused)
+.turbo/
+.next/
+.svelte-kit/
+.vercel/
+
+# --- Prisma ---
+# Prisma client is generated into node_modules by default; ignore local overrides if any
+**/prisma/generated/
+
+# --- Docker / containers ---
+*.pid
+
+# --- Flutter / Dart ---
+# Dart tooling
+.dart_tool/
+.packages
+.pub-cache/
+pubspec.lock
+
+# Flutter build outputs
+build/
+
+# iOS / macOS / Android generated
+**/ios/Pods/
+**/ios/.symlinks/
+**/ios/Flutter/Flutter.framework
+**/ios/Flutter/Flutter.podspec
+**/ios/Flutter/App.framework
+**/ios/Flutter/engine/
+**/ios/Flutter/Generated.xcconfig
+**/ios/Flutter/flutter_export_environment.sh
+**/ios/Flutter/ephemeral/
+**/android/.gradle/
+**/android/local.properties
+**/android/**/GeneratedPluginRegistrant.java
+**/linux/flutter/ephemeral/
+**/macos/Flutter/ephemeral/
+**/windows/flutter/ephemeral/
+
+# --- IDEs / editors ---
+.idea/
+*.iml
+.vscode/*
+!.vscode/settings.json
+!.vscode/tasks.json
+!.vscode/launch.json
+!.vscode/extensions.json
+
+# --- OS files ---
+Thumbs.db
+Thumbs.db:encryptable
+ehthumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+# --- Git / misc ---
+*.swp
+*.swo
+*.tmp
+*.bak
