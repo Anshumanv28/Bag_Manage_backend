@@ -26,7 +26,10 @@ export function loadEnv(env: NodeJS.ProcessEnv = process.env): Env {
   const parsed = EnvSchema.safeParse(env);
   if (!parsed.success) {
     const msg = parsed.error.issues.map((i) => `${i.path.join(".")}: ${i.message}`).join("\n");
-    throw new Error(`Invalid environment:\n${msg}`);
+    throw new Error(
+      `Invalid environment:\n${msg}\n\n` +
+        `Fix: copy backend/.env.example to backend/.env and set the values (then run npm run dev again).`,
+    );
   }
   return parsed.data;
 }
