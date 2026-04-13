@@ -1,0 +1,36 @@
+# systemd unit for the baggage Fastify API.
+#
+# Install (adjust paths/user if your server differs):
+#   sudo cp deploy/baggage-api.service /etc/systemd/system/baggage-api.service
+#   # If `node` is not /usr/bin/node (e.g. nvm), run: which node
+#   # and edit ExecStart below to use that full path.
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now baggage-api
+#   sudo systemctl status baggage-api
+#
+# Logs: journalctl -u baggage-api -f
+#
+# Stop any manual `npm run start` first so port 3040 is free.
+
+[Unit]
+Description=Baggage management API (Node/Fastify)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=ubuntu
+Group=ubuntu
+WorkingDirectory=/home/ubuntu/Bag_Manage_backend/backend
+Environment=NODE_ENV=production
+# Loads .env from WorkingDirectory (see server.ts dotenv/config).
+ExecStart=/usr/bin/node dist/server.js
+Restart=on-failure
+RestartSec=5
+
+# Avoid burst restart loops
+StartLimitIntervalSec=60
+StartLimitBurst=5
+
+[Install]
+WantedBy=multi-user.target
