@@ -62,7 +62,12 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     return reply.send({
       accessToken,
       refreshToken,
-      operator: { phone: operator.phone, name: operator.name }
+      operator: {
+        phone: operator.phone,
+        name: operator.name,
+        depositEnabled: operator.depositEnabled,
+        retrieveEnabled: operator.retrieveEnabled,
+      },
     });
   });
 
@@ -108,7 +113,16 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
       }
     });
 
-    return reply.send({ accessToken, refreshToken });
+    return reply.send({
+      accessToken,
+      refreshToken,
+      operator: {
+        phone: operator.phone,
+        name: operator.name,
+        depositEnabled: operator.depositEnabled,
+        retrieveEnabled: operator.retrieveEnabled,
+      },
+    });
   });
 
   app.post("/logout", async (req, reply) => {
@@ -153,6 +167,13 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
     const operator = await prisma.operator.findUnique({ where: { phone: payload.sub } });
     if (!operator) return reply.code(404).send({ error: "OPERATOR_NOT_FOUND" });
 
-    return reply.send({ operator: { phone: operator.phone, name: operator.name } });
+    return reply.send({
+      operator: {
+        phone: operator.phone,
+        name: operator.name,
+        depositEnabled: operator.depositEnabled,
+        retrieveEnabled: operator.retrieveEnabled,
+      },
+    });
   });
 };

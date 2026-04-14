@@ -24,8 +24,13 @@ export const operatorRoutes: FastifyPluginAsync = async (app) => {
 
   app.get("/", async () => {
     const operators = await prisma.operator.findMany({
-      select: { phone: true, name: true },
-      orderBy: { phone: "asc" }
+      select: {
+        phone: true,
+        name: true,
+        depositEnabled: true,
+        retrieveEnabled: true,
+      },
+      orderBy: { phone: "asc" },
     });
     return { operators };
   });
@@ -47,9 +52,14 @@ export const operatorRoutes: FastifyPluginAsync = async (app) => {
           data: {
             phone: body.phone,
             name: body.name,
-            passwordHash
+            passwordHash,
           },
-          select: { phone: true, name: true }
+          select: {
+            phone: true,
+            name: true,
+            depositEnabled: true,
+            retrieveEnabled: true,
+          },
         });
 
         return created;
@@ -66,14 +76,20 @@ export const operatorRoutes: FastifyPluginAsync = async (app) => {
     const body = z
       .object({
         name: z.string().min(1).optional(),
-        password: z.string().min(6).optional()
+        password: z.string().min(6).optional(),
+        depositEnabled: z.boolean().optional(),
+        retrieveEnabled: z.boolean().optional(),
       })
-      .refine((v) => v.name || v.password, { message: "No updates" })
+      .refine((v) => v.name || v.password || v.depositEnabled !== undefined || v.retrieveEnabled !== undefined, {
+        message: "No updates",
+      })
       .parse(req.body);
 
-    const data: any = {};
+    const data: Record<string, unknown> = {};
     if (body.name) data.name = body.name;
     if (body.password) data.passwordHash = await argon2.hash(body.password);
+    if (body.depositEnabled !== undefined) data.depositEnabled = body.depositEnabled;
+    if (body.retrieveEnabled !== undefined) data.retrieveEnabled = body.retrieveEnabled;
 
     try {
       const operator = await prisma.$transaction(async (tx) => {
@@ -83,7 +99,12 @@ export const operatorRoutes: FastifyPluginAsync = async (app) => {
         const updated = await tx.operator.update({
           where: { phone: params.phone },
           data,
-          select: { phone: true, name: true }
+          select: {
+            phone: true,
+            name: true,
+            depositEnabled: true,
+            retrieveEnabled: true,
+          },
         });
 
         return updated;

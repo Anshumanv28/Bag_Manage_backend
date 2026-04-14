@@ -2,6 +2,7 @@ import type { FastifyPluginAsync } from "fastify";
 import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db.js";
+import { refreshDuplicateFlagsForKeys } from "../duplicate_flags.js";
 import { loadEnv } from "../env.js";
 
 const env = loadEnv();
@@ -139,20 +140,6 @@ export const bookingRoutes: FastifyPluginAsync = async (app) => {
 
     try {
       const booking = await prisma.$transaction(async (tx) => {
-        const existingCandidate = await tx.booking.findFirst({
-          where: { candidateId: body.candidateId, status: "active" }
-        });
-        if (existingCandidate) {
-          throw Object.assign(new Error("CANDIDATE_ALREADY_ACTIVE"), { statusCode: 409 });
-        }
-
-        const existingRack = await tx.booking.findFirst({
-          where: { rackId: body.rackId, status: "active" }
-        });
-        if (existingRack) {
-          throw Object.assign(new Error("RACK_IN_USE"), { statusCode: 409 });
-        }
-
         const created = await tx.booking.create({
           data: {
             rackId: body.rackId,
@@ -161,6 +148,8 @@ export const bookingRoutes: FastifyPluginAsync = async (app) => {
             status: "active"
           }
         });
+
+        await refreshDuplicateFlagsForKeys(tx, [body.candidateId], [body.rackId]);
 
         return created;
       });
@@ -184,6 +173,9 @@ export const bookingRoutes: FastifyPluginAsync = async (app) => {
       const result = await prisma.$transaction(async (tx) => {
         const booking = await tx.booking.findUnique({ where: { id: params.id } });
         if (!booking) throw Object.assign(new Error("BOOKING_NOT_FOUND"), { statusCode: 404 });
+        if (booking.status === "flagged") {
+          throw Object.assign(new Error("FLAGGED_BOOKING"), { statusCode: 409 });
+        }
         if (booking.status !== "active") throw Object.assign(new Error("BOOKING_NOT_ACTIVE"), { statusCode: 409 });
 
         const updatedBooking = await tx.booking.update({

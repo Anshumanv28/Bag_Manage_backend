@@ -1,28 +1,57 @@
 generator client {
-  provider = "prisma-client-js"
+  provider      = "prisma-client-js"
   binaryTargets = ["native", "linux-musl-openssl-3.0.x"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
   directUrl = env("DIRECT_URL")
 }
 
 enum BookingStatus {
   active
   complete
+  flagged
+}
+
+enum FlaggedBookingReason {
+  candidate_duplicate_active
+  rack_duplicate_active
+}
+
+enum BookingActivityEventType {
+  candidate_scanned
+  rack_scanned
+  deposit_confirmed
+  return_confirmed
+}
+
+enum ScanEventType {
+  candidate_scanned
+  rack_scanned
+  deposit_cancelled
+  retrieve_cancelled
+}
+
+enum ScanOperation {
+  deposit
+  retrieve
 }
 
 model Operator {
-  phone         String @id
-  name          String
-  passwordHash  String @map("password_hash")
+  phone             String  @id
+  name              String
+  passwordHash      String  @map("password_hash")
+  depositEnabled    Boolean @default(true) @map("deposit_enabled")
+  retrieveEnabled   Boolean @default(true) @map("retrieve_enabled")
 
   refreshTokens    RefreshToken[]
-  depositBookings  Booking[] @relation("BookingDepositOperator")
-  returnBookings   Booking[] @relation("BookingReturnOperator")
+  depositBookings  Booking[]        @relation("BookingDepositOperator")
+  returnBookings   Booking[]        @relation("BookingReturnOperator")
   syncEvents       SyncEvent[]
+  bookingActivities BookingActivity[]
+  scanEvents       ScanEvent[]
 
   @@map("operators")
 }
@@ -38,22 +67,60 @@ model Booking {
   updatedAt        DateTime      @updatedAt @map("updated_at")
   completedAt      DateTime?     @map("completed_at")
 
-  operator       Operator  @relation("BookingDepositOperator", fields: [operatorId], references: [phone])
-  returnOperator Operator? @relation("BookingReturnOperator", fields: [returnOperatorId], references: [phone])
+  operator        Operator         @relation("BookingDepositOperator", fields: [operatorId], references: [phone])
+  returnOperator  Operator?        @relation("BookingReturnOperator", fields: [returnOperatorId], references: [phone])
+  activities      BookingActivity[]
 
   @@index([rackId])
   @@index([status])
   @@index([candidateId])
+  @@index([candidateId, status])
+  @@index([rackId, status])
+  @@index([updatedAt, id])
   @@map("bookings")
 }
 
+model FlaggedBooking {
+  id        String               @id @default(uuid()) @db.Uuid
+  bookingId String               @map("booking_id") @db.Uuid
+  reason    FlaggedBookingReason
+  createdAt DateTime             @default(now()) @map("created_at")
+
+  // Flagged bookings must survive even if the primary booking is removed.
+  candidateId String @map("candidate_id")
+  rackId      String @map("rack_id")
+  operatorId  String @map("operator_id")
+
+  @@unique([bookingId, reason])
+  @@index([createdAt])
+  @@index([candidateId])
+  @@index([rackId])
+  @@map("flagged_bookings")
+}
+
+model BookingActivity {
+  id         String                  @id @default(uuid()) @db.Uuid
+  bookingId  String                  @map("booking_id") @db.Uuid
+  operatorId String                  @map("operator_id")
+  deviceId   String?                 @map("device_id")
+  eventType  BookingActivityEventType @map("event_type")
+  occurredAt DateTime                @map("occurred_at")
+  metadata   Json?
+
+  booking  Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
+  operator Operator @relation(fields: [operatorId], references: [phone])
+
+  @@index([bookingId, occurredAt])
+  @@map("booking_activities")
+}
+
 model RefreshToken {
-  id         String   @id @default(uuid()) @db.Uuid
-  operatorId String   @map("operator_id")
-  tokenHash  String   @map("token_hash")
-  expiresAt  DateTime @map("expires_at")
+  id         String    @id @default(uuid()) @db.Uuid
+  operatorId String    @map("operator_id")
+  tokenHash  String    @map("token_hash")
+  expiresAt  DateTime  @map("expires_at")
   revokedAt  DateTime? @map("revoked_at")
-  createdAt  DateTime @default(now()) @map("created_at")
+  createdAt  DateTime  @default(now()) @map("created_at")
   lastUsedAt DateTime? @map("last_used_at")
 
   operator Operator @relation(fields: [operatorId], references: [phone])
@@ -78,3 +145,21 @@ model SyncEvent {
   @@map("sync_events")
 }
 
+model ScanEvent {
+  id         String        @id @default(uuid()) @db.Uuid
+  operatorId String        @map("operator_id")
+  deviceId   String?       @map("device_id")
+  operation  ScanOperation
+  eventType  ScanEventType @map("event_type")
+  candidateId String?      @map("candidate_id")
+  rackId     String?       @map("rack_id")
+  occurredAt DateTime      @default(now()) @map("occurred_at")
+  metadata   Json?
+  createdAt  DateTime      @default(now()) @map("created_at")
+
+  operator Operator @relation(fields: [operatorId], references: [phone])
+
+  @@index([operatorId, occurredAt])
+  @@index([createdAt])
+  @@map("scan_events")
+}

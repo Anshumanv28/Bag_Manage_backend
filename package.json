@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
-    "prisma:deploy": "prisma migrate deploy"
+    "prisma:deploy": "prisma migrate deploy",
+    "load:sync": "node load/run-sync-push-load.mjs"
   },
   "dependencies": {
     "@fastify/cors": "^10.1.0",

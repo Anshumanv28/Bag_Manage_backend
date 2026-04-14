@@ -96,7 +96,13 @@ await app.register(cors, { origin: true });
 await app.register(formbody);
 await app.register(rateLimit, {
   max: 300,
-  timeWindow: "1 minute"
+  timeWindow: "1 minute",
+  keyGenerator: (req) => {
+    // Prefer auth token so limits are per-operator/device rather than per-NAT/IP.
+    const auth = req.headers.authorization;
+    if (typeof auth === "string" && auth.length > 0) return auth;
+    return req.ip;
+  }
 });
 
 await app.register(jwtPlugin, { env });
