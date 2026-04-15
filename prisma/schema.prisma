@@ -13,18 +13,7 @@ enum BookingStatus {
   active
   complete
   flagged
-}
-
-enum FlaggedBookingReason {
-  candidate_duplicate_active
-  rack_duplicate_active
-}
-
-enum BookingActivityEventType {
-  candidate_scanned
-  rack_scanned
-  deposit_confirmed
-  return_confirmed
+  deleted
 }
 
 enum ScanEventType {
@@ -50,7 +39,6 @@ model Operator {
   depositBookings  Booking[]        @relation("BookingDepositOperator")
   returnBookings   Booking[]        @relation("BookingReturnOperator")
   syncEvents       SyncEvent[]
-  bookingActivities BookingActivity[]
   scanEvents       ScanEvent[]
 
   @@map("operators")
@@ -66,10 +54,10 @@ model Booking {
   createdAt        DateTime      @default(now()) @map("created_at")
   updatedAt        DateTime      @updatedAt @map("updated_at")
   completedAt      DateTime?     @map("completed_at")
+  deletedAt        DateTime?     @map("deleted_at")
 
   operator        Operator         @relation("BookingDepositOperator", fields: [operatorId], references: [phone])
   returnOperator  Operator?        @relation("BookingReturnOperator", fields: [returnOperatorId], references: [phone])
-  activities      BookingActivity[]
 
   @@index([rackId])
   @@index([status])
@@ -78,40 +66,6 @@ model Booking {
   @@index([rackId, status])
   @@index([updatedAt, id])
   @@map("bookings")
-}
-
-model FlaggedBooking {
-  id        String               @id @default(uuid()) @db.Uuid
-  bookingId String               @map("booking_id") @db.Uuid
-  reason    FlaggedBookingReason
-  createdAt DateTime             @default(now()) @map("created_at")
-
-  // Flagged bookings must survive even if the primary booking is removed.
-  candidateId String @map("candidate_id")
-  rackId      String @map("rack_id")
-  operatorId  String @map("operator_id")
-
-  @@unique([bookingId, reason])
-  @@index([createdAt])
-  @@index([candidateId])
-  @@index([rackId])
-  @@map("flagged_bookings")
-}
-
-model BookingActivity {
-  id         String                  @id @default(uuid()) @db.Uuid
-  bookingId  String                  @map("booking_id") @db.Uuid
-  operatorId String                  @map("operator_id")
-  deviceId   String?                 @map("device_id")
-  eventType  BookingActivityEventType @map("event_type")
-  occurredAt DateTime                @map("occurred_at")
-  metadata   Json?
-
-  booking  Booking  @relation(fields: [bookingId], references: [id], onDelete: Cascade)
-  operator Operator @relation(fields: [operatorId], references: [phone])
-
-  @@index([bookingId, occurredAt])
-  @@map("booking_activities")
 }
 
 model RefreshToken {

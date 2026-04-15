@@ -4,7 +4,6 @@ import { authRoutes } from "./auth.js";
 import { operatorRoutes } from "./operators.js";
 import { bookingRoutes } from "./bookings.js";
 import { analyticsRoutes } from "./analytics.js";
-import { flaggedBookingRoutes } from "./flagged_bookings.js";
 
 export const apiV1Routes: FastifyPluginAsync = async (app) => {
   app.get("/ping", async () => ({ pong: true }));
@@ -12,6 +11,5 @@ export const apiV1Routes: FastifyPluginAsync = async (app) => {
   await app.register(authRoutes, { prefix: "/auth" });
   await app.register(operatorRoutes, { prefix: "/operators" });
   await app.register(bookingRoutes, { prefix: "/bookings" });
-  await app.register(flaggedBookingRoutes, { prefix: "/flagged-bookings" });
   await app.register(analyticsRoutes, { prefix: "/analytics" });
 };

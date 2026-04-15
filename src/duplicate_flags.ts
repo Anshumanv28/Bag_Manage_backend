@@ -1,9 +1,6 @@
-import crypto from "node:crypto";
-
 import type { Prisma } from "@prisma/client";
-import { FlaggedBookingReason } from "@prisma/client";
 
-/** When bookings share a candidate or rack, mark them flagged and record the flag (idempotent). */
+/** When bookings share a candidate or rack, mark them flagged. */
 export async function refreshDuplicateFlagsForKeys(
   tx: Prisma.TransactionClient,
   candidateIds: string[],
@@ -22,17 +19,6 @@ export async function refreshDuplicateFlagsForKeys(
       where: { id: { in: rows.map((r) => r.id) } },
       data: { status: "flagged" },
     });
-    await tx.flaggedBooking.createMany({
-      data: rows.map((r) => ({
-        id: crypto.randomUUID(),
-        bookingId: r.id,
-        reason: FlaggedBookingReason.candidate_duplicate_active,
-        candidateId,
-        rackId: r.rackId,
-        operatorId: r.operatorId,
-      })),
-      skipDuplicates: true,
-    });
   }
 
   for (const rackId of uniqR) {
@@ -44,17 +30,6 @@ export async function refreshDuplicateFlagsForKeys(
     await tx.booking.updateMany({
       where: { id: { in: rows.map((r) => r.id) } },
       data: { status: "flagged" },
-    });
-    await tx.flaggedBooking.createMany({
-      data: rows.map((r) => ({
-        id: crypto.randomUUID(),
-        bookingId: r.id,
-        reason: FlaggedBookingReason.rack_duplicate_active,
-        candidateId: r.candidateId,
-        rackId,
-        operatorId: r.operatorId,
-      })),
-      skipDuplicates: true,
     });
   }
 }

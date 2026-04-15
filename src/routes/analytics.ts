@@ -204,34 +204,80 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       })
       .parse(req.query);
 
-    const clauses: string[] = [`occurred_at >= $1`, `occurred_at < $2`];
-    const params: any[] = [query.from, query.to];
-    let i = params.length;
-    const add = (clause: string, value: any) => {
-      i += 1;
-      params.push(value);
-      clauses.push(clause.replace("?", `$${i}`));
+    // Scan events: candidate_scanned, rack_scanned
+    const scanClauses: string[] = [`se.occurred_at >= $1`, `se.occurred_at < $2`];
+    const scanParams: any[] = [query.from, query.to];
+    let si = scanParams.length;
+    const addScan = (clause: string, value: any) => {
+      si += 1;
+      scanParams.push(value);
+      scanClauses.push(clause.replace("?", `$${si}`));
     };
-    if (query.operatorId) add(`operator_id = ?`, query.operatorId);
-    if (query.deviceId) add(`device_id = ?`, query.deviceId);
+    if (query.operatorId) addScan(`se.operator_id = ?`, query.operatorId);
+    if (query.deviceId) addScan(`se.device_id = ?`, query.deviceId);
 
-    const rows = await prisma.$queryRawUnsafe<
+    const scanRows = await prisma.$queryRawUnsafe<
       { eventType: string; count: number }[]
     >(
       `
       select
-        event_type::text as "eventType",
+        se.event_type::text as "eventType",
         count(*)::int as "count"
-      from booking_activities
-      where ${clauses.join(" and ")}
+      from scan_events se
+      where ${scanClauses.join(" and ")}
       group by 1
       order by 1 asc
       `,
-      ...params,
+      ...scanParams,
     );
 
-    const byType: Record<string, number> = {};
-    for (const r of rows) byType[r.eventType] = r.count;
+    const scanByType: Record<string, number> = {};
+    for (const r of scanRows) scanByType[r.eventType] = r.count;
+
+    // Booking transitions approximation:
+    // - deposit_confirmed ~= bookings created in window
+    // - return_confirmed  ~= bookings completed in window (status=complete)
+    const depositClauses: string[] = [`b.created_at >= $1`, `b.created_at < $2`];
+    const depositParams: any[] = [query.from, query.to];
+    let di = depositParams.length;
+    const addDeposit = (clause: string, value: any) => {
+      di += 1;
+      depositParams.push(value);
+      depositClauses.push(clause.replace("?", `$${di}`));
+    };
+    if (query.operatorId) addDeposit(`b.operator_id = ?`, query.operatorId);
+
+    const depositRes = await prisma.$queryRawUnsafe<{ count: number }[]>(
+      `
+      select count(*)::int as "count"
+      from bookings b
+      where ${depositClauses.join(" and ")}
+      `,
+      ...depositParams,
+    );
+
+    const returnClauses: string[] = [
+      `b.completed_at >= $1`,
+      `b.completed_at < $2`,
+      `b.status = 'complete'`,
+    ];
+    const returnParams: any[] = [query.from, query.to];
+    let ri = returnParams.length;
+    const addReturn = (clause: string, value: any) => {
+      ri += 1;
+      returnParams.push(value);
+      returnClauses.push(clause.replace("?", `$${ri}`));
+    };
+    if (query.operatorId) addReturn(`b.return_operator_id = ?`, query.operatorId);
+
+    const returnRes = await prisma.$queryRawUnsafe<{ count: number }[]>(
+      `
+      select count(*)::int as "count"
+      from bookings b
+      where ${returnClauses.join(" and ")}
+      `,
+      ...returnParams,
+    );
 
     return {
       from: query.from.toISOString(),
@@ -239,10 +285,10 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       operatorId: query.operatorId ?? null,
       deviceId: query.deviceId ?? null,
       counts: {
-        candidate_scanned: byType["candidate_scanned"] ?? 0,
-        rack_scanned: byType["rack_scanned"] ?? 0,
-        deposit_confirmed: byType["deposit_confirmed"] ?? 0,
-        return_confirmed: byType["return_confirmed"] ?? 0,
+        candidate_scanned: scanByType["candidate_scanned"] ?? 0,
+        rack_scanned: scanByType["rack_scanned"] ?? 0,
+        deposit_confirmed: depositRes?.[0]?.count ?? 0,
+        return_confirmed: returnRes?.[0]?.count ?? 0,
       },
     };
   });

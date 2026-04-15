@@ -1,8 +1,5 @@
 import type { FastifyPluginAsync } from "fastify";
-import {
-  BookingActivityEventType,
-  Prisma,
-} from "@prisma/client";
+import { BookingStatus, Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { refreshDuplicateFlagsForKeys } from "../duplicate_flags.js";
@@ -44,15 +41,6 @@ const MutationSchema = z.discriminatedUnion("type", [
     type: z.literal("booking_finish"),
     bookingId: z.string().uuid(),
     endedAt: z.coerce.date().optional(),
-  }),
-  z.object({
-    type: z.literal("activity_log"),
-    activityId: z.string().uuid(),
-    bookingId: z.string().uuid(),
-    eventType: z.nativeEnum(BookingActivityEventType),
-    occurredAt: z.coerce.date().optional(),
-    metadata: z.record(z.string(), z.any()).optional(),
-    deviceId: z.string().min(1).optional(),
   }),
   z.object({
     type: z.literal("scan_event"),
@@ -106,6 +94,7 @@ function bookingToPullPayload(b: {
   createdAt: Date;
   updatedAt: Date;
   completedAt: Date | null;
+  deletedAt: Date | null;
 }) {
   return {
     id: b.id,
@@ -117,6 +106,7 @@ function bookingToPullPayload(b: {
     createdAt: b.createdAt.toISOString(),
     updatedAt: b.updatedAt.toISOString(),
     completedAt: b.completedAt ? b.completedAt.toISOString() : null,
+    deletedAt: b.deletedAt ? b.deletedAt.toISOString() : null,
   };
 }
 
@@ -129,8 +119,6 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
   });
 
   app.post("/pull", async (req, reply) => {
-    const operatorPhone = (req as { operatorPhone?: string }).operatorPhone as string;
-
     let body: { cursor?: string; limit?: number };
     try {
       body = z
@@ -145,19 +133,9 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
 
     const limit = body.limit ?? 200;
 
-    // Visibility rules (broadcast model):
-    // - Always include active bookings (for scan validation across operators)
-    // - Include flagged bookings (separate state, but must be shown to operators)
-    // - Include completed bookings updated recently (so all devices converge on latest state)
-    const completedWindowMs = 24 * 60 * 60 * 1000; // 24h
-    const completedCutoff = new Date(Date.now() - completedWindowMs);
-    const visibility: Prisma.BookingWhereInput = {
-      OR: [
-        { status: "active" },
-        { status: "flagged" },
-        { status: "complete", updatedAt: { gte: completedCutoff } },
-      ],
-    };
+    // Full snapshot model: return ALL current (non-deleted) bookings to devices so
+    // clients can infer server-side deletions by absence, without a separate ids endpoint.
+    const visibility: Prisma.BookingWhereInput = { deletedAt: null };
 
     let cursorWhere: Prisma.BookingWhereInput = {};
     if (body.cursor) {
@@ -174,7 +152,20 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
       }
     }
 
-    const rows = await prisma.booking.findMany({
+    type PullBookingRow = {
+      id: string;
+      candidateId: string;
+      rackId: string;
+      operatorId: string;
+      returnOperatorId: string | null;
+      status: string;
+      createdAt: Date;
+      updatedAt: Date;
+      completedAt: Date | null;
+      deletedAt: Date | null;
+    };
+
+    const rows = (await prisma.booking.findMany({
       where: { AND: [visibility, cursorWhere] },
       orderBy: [{ updatedAt: "asc" }, { id: "asc" }],
       take: limit + 1,
@@ -188,8 +179,9 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
         createdAt: true,
         updatedAt: true,
         completedAt: true,
-      },
-    });
+        deletedAt: true,
+      } as unknown as Prisma.BookingSelect,
+    })) as unknown as PullBookingRow[];
 
     const page = rows.slice(0, limit);
     const nextCursor =
@@ -200,20 +192,6 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
           })
         : null;
 
-    const ids = page.map((b) => b.id);
-    const flags =
-      ids.length > 0
-        ? await prisma.flaggedBooking.findMany({
-            where: { bookingId: { in: ids } },
-            select: {
-              id: true,
-              bookingId: true,
-              reason: true,
-              createdAt: true,
-            },
-          })
-        : [];
-
     const changes: unknown[] = [];
     for (const b of page) {
       changes.push({
@@ -221,23 +199,13 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
         booking: bookingToPullPayload(b),
       });
     }
-    for (const f of flags) {
-      changes.push({
-        type: "flagged_upsert",
-        flagged: {
-          id: f.id,
-          bookingId: f.bookingId,
-          reason: f.reason,
-          createdAt: f.createdAt.toISOString(),
-        },
-      });
-    }
 
     return { nextCursor, changes };
   });
 
   app.post("/push", async (req) => {
-    const operatorPhone = (req as { operatorPhone?: string }).operatorPhone as string;
+    const operatorPhone = (req as { operatorPhone?: string })
+      .operatorPhone as string;
 
     const body = z
       .object({
@@ -275,7 +243,9 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
                 if (m.type === "scan_event") return null;
                 return m.bookingId;
               })
-              .filter((x): x is string => typeof x === "string" && x.length > 0),
+              .filter(
+                (x): x is string => typeof x === "string" && x.length > 0,
+              ),
           ),
         );
 
@@ -387,66 +357,7 @@ export const syncRoutes: FastifyPluginAsync = async (app) => {
             startCreates.map((s) => s.rackId),
           );
 
-          // Conflicts are handled by `refreshDuplicateFlagsForKeys` which marks bookings as `flagged`
-          // and inserts `flagged_bookings` rows. Do not delete bookings.
-        }
-
-        for (let i = 0; i < body.mutations.length; i++) {
-          const m = body.mutations[i]!;
-          if (m.type !== "activity_log") continue;
-
-          try {
-            const existingAct = await tx.bookingActivity.findUnique({
-              where: { id: m.activityId },
-            });
-            if (existingAct) {
-              results[i] = { ok: true, type: "activity_log" };
-              okCount += 1;
-              continue;
-            }
-
-            const booking = byId.get(m.bookingId);
-            if (!booking) {
-              results[i] = {
-                ok: false,
-                type: "activity_log",
-                error: "BOOKING_NOT_FOUND",
-              };
-              errorCount += 1;
-              continue;
-            }
-
-            await tx.bookingActivity.create({
-              data: {
-                id: m.activityId,
-                bookingId: m.bookingId,
-                operatorId: operatorPhone,
-                deviceId: m.deviceId ?? body.deviceId,
-                eventType: m.eventType,
-                occurredAt: m.occurredAt ?? new Date(),
-                metadata:
-                  m.metadata === undefined
-                    ? undefined
-                    : (m.metadata as Prisma.InputJsonValue),
-              },
-            });
-
-            results[i] = { ok: true, type: "activity_log" };
-            okCount += 1;
-          } catch (e) {
-            if (isUniqueViolation(e)) {
-              results[i] = { ok: true, type: "activity_log" };
-              okCount += 1;
-              continue;
-            }
-            req.log.error({ err: e, type: m.type }, "sync:push:mutation_error");
-            results[i] = {
-              ok: false,
-              type: m.type,
-              error: e instanceof Error ? e.message : "INTERNAL",
-            };
-            errorCount += 1;
-          }
+          // Conflicts are handled by `refreshDuplicateFlagsForKeys` which marks bookings as `flagged`.
         }
 
         for (let i = 0; i < body.mutations.length; i++) {
