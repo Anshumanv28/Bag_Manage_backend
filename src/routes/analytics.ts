@@ -27,9 +27,10 @@ function encodeSyncEventsCursor(v: { createdAt: Date; id: string }): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-function decodeSyncEventsCursor(
-  cursor: string,
-): { createdAt: Date; id: string } {
+function decodeSyncEventsCursor(cursor: string): {
+  createdAt: Date;
+  id: string;
+} {
   const json = Buffer.from(cursor, "base64url").toString("utf8");
   const parsed = JSON.parse(json) as SyncEventsCursor;
   if (!parsed?.createdAt || !parsed?.id) throw new Error("INVALID_CURSOR");
@@ -48,9 +49,10 @@ function encodeScanEventsCursor(v: { occurredAt: Date; id: string }): string {
   return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
 }
 
-function decodeScanEventsCursor(
-  cursor: string,
-): { occurredAt: Date; id: string } {
+function decodeScanEventsCursor(cursor: string): {
+  occurredAt: Date;
+  id: string;
+} {
   const json = Buffer.from(cursor, "base64url").toString("utf8");
   const parsed = JSON.parse(json) as ScanEventsCursor;
   if (!parsed?.occurredAt || !parsed?.id) throw new Error("INVALID_CURSOR");
@@ -88,13 +90,15 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
           operatorId: z.string().min(3).optional(),
           deviceId: z.string().min(1).optional(),
           operation: z.enum(["deposit", "retrieve"]).optional(),
-          eventType: z.enum([
-            "candidate_scanned",
-            "rack_scanned",
-            "deposit_cancelled",
-            "retrieve_cancelled",
-            "scan_rejected",
-          ]).optional(),
+          eventType: z
+            .enum([
+              "candidate_scanned",
+              "rack_scanned",
+              "deposit_cancelled",
+              "retrieve_cancelled",
+              "scan_rejected",
+            ])
+            .optional(),
           limit: z.coerce.number().int().positive().max(500).optional(),
           cursor: z.string().min(1).optional(),
         })
@@ -179,7 +183,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
               const raw = page[page.length - 1]!.occurredAt;
               const isoish = raw.includes(" ") ? raw.replace(" ", "T") : raw;
               // If the string already includes an offset/Z, keep it; otherwise assume UTC.
-              const hasZone = /[zZ]$/.test(isoish) || /[+-]\d{2}(:?\d{2})?$/.test(isoish);
+              const hasZone =
+                /[zZ]$/.test(isoish) || /[+-]\d{2}(:?\d{2})?$/.test(isoish);
               return new Date(hasZone ? isoish : `${isoish}Z`);
             })(),
             id: page[page.length - 1]!.id,
@@ -334,7 +339,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     );
 
     // Now sort newest-first for display and apply limit.
-    const sorted = [...rows].sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+    const sorted = [...rows].sort((a, b) =>
+      b.createdAt.localeCompare(a.createdAt),
+    );
     const page = sorted.slice(0, limit);
 
     return { rows: page };
@@ -352,7 +359,10 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     // Scan events: candidate_scanned, rack_scanned
     const occurredExpr = `(se.occurred_at AT TIME ZONE 'UTC')`;
-    const scanClauses: string[] = [`${occurredExpr} >= $1`, `${occurredExpr} < $2`];
+    const scanClauses: string[] = [
+      `${occurredExpr} >= $1`,
+      `${occurredExpr} < $2`,
+    ];
     const scanParams: any[] = [query.from, query.to];
     let si = scanParams.length;
     const addScan = (clause: string, value: any) => {
@@ -384,7 +394,10 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     // Booking transitions approximation:
     // - deposit_confirmed ~= bookings created in window
     // - return_confirmed  ~= bookings completed in window (status=complete)
-    const depositClauses: string[] = [`b.created_at >= $1`, `b.created_at < $2`];
+    const depositClauses: string[] = [
+      `b.created_at >= $1`,
+      `b.created_at < $2`,
+    ];
     const depositParams: any[] = [query.from, query.to];
     let di = depositParams.length;
     const addDeposit = (clause: string, value: any) => {
@@ -415,7 +428,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       returnParams.push(value);
       returnClauses.push(clause.replace("?", `$${ri}`));
     };
-    if (query.operatorId) addReturn(`b.return_operator_id = ?`, query.operatorId);
+    if (query.operatorId)
+      addReturn(`b.return_operator_id = ?`, query.operatorId);
 
     const returnRes = await prisma.$queryRawUnsafe<{ count: number }[]>(
       `
@@ -447,7 +461,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         to: z.coerce.date().optional(),
         status: z.enum(["active", "complete"]).optional(),
         operatorId: z.string().min(3).optional(),
-        returnOperatorId: z.string().min(3).optional()
+        returnOperatorId: z.string().min(3).optional(),
       })
       .parse(req.query);
 
@@ -458,14 +472,14 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     if (query.from || query.to) {
       where.createdAt = {
         ...(query.from ? { gte: query.from } : {}),
-        ...(query.to ? { lt: query.to } : {})
+        ...(query.to ? { lt: query.to } : {}),
       };
     }
 
     const [total, active, complete] = await Promise.all([
       prisma.booking.count({ where }),
       prisma.booking.count({ where: { ...where, status: "active" } }),
-      prisma.booking.count({ where: { ...where, status: "complete" } })
+      prisma.booking.count({ where: { ...where, status: "complete" } }),
     ]);
 
     // Accurate avg completion time in minutes via SQL, using the same filters.
@@ -478,7 +492,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     if (query.status) push(`status = ?`, query.status);
     if (query.operatorId) push(`operator_id = ?`, query.operatorId);
-    if (query.returnOperatorId) push(`return_operator_id = ?`, query.returnOperatorId);
+    if (query.returnOperatorId)
+      push(`return_operator_id = ?`, query.returnOperatorId);
     if (query.from) push(`created_at >= ?`, query.from);
     if (query.to) push(`created_at < ?`, query.to);
 
@@ -486,7 +501,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     sqlFilters.push(`status = 'complete'`);
     sqlFilters.push(`completed_at is not null`);
 
-    const whereSql = sqlFilters.length ? `where ${sqlFilters.join(" and ")}` : "";
+    const whereSql = sqlFilters.length
+      ? `where ${sqlFilters.join(" and ")}`
+      : "";
 
     const avgRes = await prisma.$queryRawUnsafe<
       { avg_completion_minutes: number | null }[]
@@ -496,14 +513,14 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       from bookings
       ${whereSql}
       `,
-      ...params
+      ...params,
     );
 
     return {
       total,
       active,
       complete,
-      avgCompletionMinutes: avgRes?.[0]?.avg_completion_minutes ?? null
+      avgCompletionMinutes: avgRes?.[0]?.avg_completion_minutes ?? null,
     };
   });
 
@@ -516,7 +533,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         timezone: z.string().min(1).default("UTC"),
         status: z.enum(["active", "complete"]).optional(),
         operatorId: z.string().min(3).optional(),
-        returnOperatorId: z.string().min(3).optional()
+        returnOperatorId: z.string().min(3).optional(),
       })
       .parse(req.query);
 
@@ -525,10 +542,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const bucket = query.bucket; // validated enum
     const tz = query.timezone;
 
-    const baseClauses: string[] = [
-      `created_at >= $1`,
-      `created_at < $2`
-    ];
+    const baseClauses: string[] = [`created_at >= $1`, `created_at < $2`];
     const baseParams: any[] = [query.from, query.to];
 
     let i = baseParams.length;
@@ -540,10 +554,13 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     if (query.status) add(`status = ?`, query.status);
     if (query.operatorId) add(`operator_id = ?`, query.operatorId);
-    if (query.returnOperatorId) add(`return_operator_id = ?`, query.returnOperatorId);
+    if (query.returnOperatorId)
+      add(`return_operator_id = ?`, query.returnOperatorId);
 
     // created series
-    const created = await prisma.$queryRawUnsafe<{ bucket: string; count: number }[]>(
+    const created = await prisma.$queryRawUnsafe<
+      { bucket: string; count: number }[]
+    >(
       `
       select
         date_trunc('${bucket}', timezone($${i + 1}, created_at))::text as bucket,
@@ -554,12 +571,18 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       order by 1 asc
       `,
       ...baseParams,
-      tz
+      tz,
     );
 
     // completed series (bucket on completed_at, and only completed rows)
-    const completedWhere = [...baseClauses, `status = 'complete'`, `completed_at is not null`];
-    const completed = await prisma.$queryRawUnsafe<{ bucket: string; count: number }[]>(
+    const completedWhere = [
+      ...baseClauses,
+      `status = 'complete'`,
+      `completed_at is not null`,
+    ];
+    const completed = await prisma.$queryRawUnsafe<
+      { bucket: string; count: number }[]
+    >(
       `
       select
         date_trunc('${bucket}', timezone($${i + 1}, completed_at))::text as bucket,
@@ -570,14 +593,14 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       order by 1 asc
       `,
       ...baseParams,
-      tz
+      tz,
     );
 
     return {
       bucket,
       timezone: tz,
       created,
-      completed
+      completed,
     };
   });
 
@@ -589,7 +612,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         bucket: BucketSchema.default("day"),
         timezone: z.string().min(1).default("UTC"),
         operatorId: z.string().min(3).optional(),
-        deviceId: z.string().min(1).optional()
+        deviceId: z.string().min(1).optional(),
       })
       .parse(req.query);
 
@@ -629,10 +652,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       order by 1 asc
       `,
       ...params,
-      tz
+      tz,
     );
 
     return { bucket, timezone: tz, series: rows };
   });
 };
-

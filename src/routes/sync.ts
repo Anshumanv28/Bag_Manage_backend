@@ -85,8 +85,8 @@ const MutationSchema = z.discriminatedUnion("type", [
     ]),
     candidateId: z.string().min(1).optional(),
     rackId: z.string().min(1).optional(),
-    // Leave scan-event ingestion as-is for now; dashboard query normalizes timezone.
-    occurredAt: z.coerce.date().optional(),
+    // If device sends naive timestamp (no zone), treat it as IST and convert to UTC instant.
+    occurredAt: DeviceDate.optional(),
     metadata: z.record(z.string(), z.any()).optional(),
   }),
 ]);
