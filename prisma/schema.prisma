@@ -21,6 +21,7 @@ enum ScanEventType {
   rack_scanned
   deposit_cancelled
   retrieve_cancelled
+  scan_rejected
 }
 
 enum ScanOperation {

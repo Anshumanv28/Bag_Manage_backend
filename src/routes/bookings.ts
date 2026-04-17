@@ -100,6 +100,22 @@ function messageOf(e: unknown): string {
   return String(e);
 }
 
+function fixIstSkewForBooking<T extends { createdAt: Date; updatedAt: Date; completedAt: Date | null }>(
+  b: T,
+): T {
+  // Some older device sync payloads sent naive local timestamps (IST) which were
+  // parsed on a UTC server as UTC, making createdAt/completedAt appear ~5h30m
+  // ahead and even after updatedAt (which should never happen).
+  const SHIFT_MS = 330 * 60 * 1000;
+  const needsFix = b.createdAt.getTime() > b.updatedAt.getTime() + 60 * 1000;
+  if (!needsFix) return b;
+
+  const createdAt = new Date(b.createdAt.getTime() - SHIFT_MS);
+  const completedAt =
+    b.completedAt != null ? new Date(b.completedAt.getTime() - SHIFT_MS) : null;
+  return { ...b, createdAt, completedAt };
+}
+
 export const bookingRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", async (req) => {
     if (isAdmin(req)) {
@@ -164,7 +180,7 @@ export const bookingRoutes: FastifyPluginAsync = async (app) => {
       },
     });
 
-    const page = rows.slice(0, limit);
+    const page = rows.slice(0, limit).map(fixIstSkewForBooking);
     const nextCursor =
       rows.length > limit
         ? encodeFlaggedCursor({
@@ -290,7 +306,7 @@ export const bookingRoutes: FastifyPluginAsync = async (app) => {
       take: limit + 1,
     });
 
-    const bookings = rows.slice(0, limit);
+    const bookings = rows.slice(0, limit).map(fixIstSkewForBooking);
     const nextCursor =
       rows.length > limit
         ? encodeCursor({

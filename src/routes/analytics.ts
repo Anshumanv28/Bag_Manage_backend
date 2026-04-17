@@ -75,7 +75,8 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         | "candidate_scanned"
         | "rack_scanned"
         | "deposit_cancelled"
-        | "retrieve_cancelled";
+        | "retrieve_cancelled"
+        | "scan_rejected";
       limit?: number;
       cursor?: string;
     };
@@ -92,6 +93,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
             "rack_scanned",
             "deposit_cancelled",
             "retrieve_cancelled",
+            "scan_rejected",
           ]).optional(),
           limit: z.coerce.number().int().positive().max(500).optional(),
           cursor: z.string().min(1).optional(),
@@ -103,9 +105,9 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
 
     const limit = query.limit ?? 200;
 
-    // Device-side `occurred_at` is stored as a naive timestamp (no TZ) in DB.
-    // Treat it as IST and convert to UTC for filtering + display.
-    const occurredExpr = `(se.occurred_at AT TIME ZONE 'Asia/Kolkata')`;
+    // `occurred_at` is stored as a naive timestamp (no TZ). In our system this value
+    // represents UTC. Treat it as UTC when filtering and returning results.
+    const occurredExpr = `(se.occurred_at AT TIME ZONE 'UTC')`;
     const clauses: string[] = [`${occurredExpr} >= $1`, `${occurredExpr} < $2`];
     const params: any[] = [query.from, query.to];
     let i = params.length;
@@ -158,7 +160,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         se.event_type::text as "eventType",
         se.candidate_id::text as "candidateId",
         se.rack_id::text as "rackId",
-        (${occurredExpr} AT TIME ZONE 'UTC')::text as "occurredAt",
+        ${occurredExpr}::text as "occurredAt",
         (se.created_at AT TIME ZONE 'UTC')::text as "createdAt",
         se.metadata as "metadata"
       from scan_events se
@@ -173,10 +175,13 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     const nextCursor =
       rows.length > limit
         ? encodeScanEventsCursor({
-            // occurredAt is returned as a naive UTC timestamp string (SQL `::text`).
-            occurredAt: new Date(
-              `${page[page.length - 1]!.occurredAt.replace(" ", "T")}Z`,
-            ),
+            occurredAt: (() => {
+              const raw = page[page.length - 1]!.occurredAt;
+              const isoish = raw.includes(" ") ? raw.replace(" ", "T") : raw;
+              // If the string already includes an offset/Z, keep it; otherwise assume UTC.
+              const hasZone = /[zZ]$/.test(isoish) || /[+-]\d{2}(:?\d{2})?$/.test(isoish);
+              return new Date(hasZone ? isoish : `${isoish}Z`);
+            })(),
             id: page[page.length - 1]!.id,
           })
         : null;
@@ -346,7 +351,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       .parse(req.query);
 
     // Scan events: candidate_scanned, rack_scanned
-    const occurredExpr = `(se.occurred_at AT TIME ZONE 'Asia/Kolkata')`;
+    const occurredExpr = `(se.occurred_at AT TIME ZONE 'UTC')`;
     const scanClauses: string[] = [`${occurredExpr} >= $1`, `${occurredExpr} < $2`];
     const scanParams: any[] = [query.from, query.to];
     let si = scanParams.length;

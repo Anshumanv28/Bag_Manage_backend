@@ -1,8 +1,39 @@
 import type { FastifyPluginAsync } from "fastify";
-import { BookingStatus, Prisma } from "@prisma/client";
+import { Prisma } from "@prisma/client";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { refreshDuplicateFlagsForKeys } from "../duplicate_flags.js";
+
+function parseDeviceDate(value: unknown): Date | undefined {
+  if (value === undefined || value === null) return undefined;
+  if (value instanceof Date) return value;
+  if (typeof value === "number" && Number.isFinite(value)) return new Date(value);
+  if (typeof value !== "string") return undefined;
+
+  const t = value.trim();
+  if (!t) return undefined;
+
+  const hasZone =
+    /[zZ]$/.test(t) ||
+    /[+-]\d{2}(?::?\d{2})?$/.test(t) ||
+    /[+-]\d{4}$/.test(t);
+  if (hasZone) return new Date(t);
+
+  // If the device sends a naive timestamp (no zone), treat it as IST.
+  // This avoids server-local timezone differences (UTC vs IST) skewing booking times.
+  const naive =
+    /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(t);
+  if (naive) return new Date(`${naive[1]}T${naive[2]}+05:30`);
+
+  return new Date(t);
+}
+
+const DeviceDate = z
+  .union([z.date(), z.string(), z.number()])
+  .transform((v) => parseDeviceDate(v))
+  .refine((d) => d instanceof Date && !Number.isNaN(d.getTime()), {
+    message: "INVALID_DATE",
+  });
 
 function bearerToken(header?: string): string | null {
   if (!header) return null;
@@ -35,12 +66,12 @@ const MutationSchema = z.discriminatedUnion("type", [
     bookingId: z.string().uuid(),
     rackId: z.string().min(1),
     candidateId: z.string().min(1),
-    startedAt: z.coerce.date().optional(),
+    startedAt: DeviceDate.optional(),
   }),
   z.object({
     type: z.literal("booking_finish"),
     bookingId: z.string().uuid(),
-    endedAt: z.coerce.date().optional(),
+    endedAt: DeviceDate.optional(),
   }),
   z.object({
     type: z.literal("scan_event"),
@@ -51,9 +82,11 @@ const MutationSchema = z.discriminatedUnion("type", [
       "rack_scanned",
       "deposit_cancelled",
       "retrieve_cancelled",
+      "scan_rejected",
     ]),
     candidateId: z.string().min(1).optional(),
     rackId: z.string().min(1).optional(),
+    // Leave scan-event ingestion as-is for now; dashboard query normalizes timezone.
     occurredAt: z.coerce.date().optional(),
     metadata: z.record(z.string(), z.any()).optional(),
   }),
