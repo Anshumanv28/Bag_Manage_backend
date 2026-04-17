@@ -1,4 +1,4 @@
-import type { FastifyPluginAsync } from "fastify";
+import type { FastifyInstance, FastifyPluginAsync } from "fastify";
 import { z } from "zod";
 import argon2 from "argon2";
 import crypto from "node:crypto";
@@ -30,7 +30,14 @@ function signRefreshToken(operatorPhone: string): { token: string; expiresAt: Da
 }
 
 function verifyRefreshToken(token: string): { sub: string; typ: string } {
-  return jwt.verify(token, env.JWT_REFRESH_SECRET) as any;
+  return jwt.verify(token, env.JWT_REFRESH_SECRET) as { sub: string; typ: string };
+}
+
+function verifyAccessToken(
+  app: FastifyInstance,
+  token: string,
+): { sub: string; typ: string } {
+  return app.jwt.verify(token) as { sub: string; typ: string };
 }
 
 export const authRoutes: FastifyPluginAsync = async (app) => {
@@ -157,7 +164,7 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
 
     let payload: { sub: string; typ: string };
     try {
-      payload = (await app.jwt.verify(token)) as any;
+      payload = verifyAccessToken(app, token);
     } catch {
       return reply.code(401).send({ error: "INVALID_ACCESS_TOKEN" });
     }
@@ -175,5 +182,54 @@ export const authRoutes: FastifyPluginAsync = async (app) => {
         retrieveEnabled: operator.retrieveEnabled,
       },
     });
+  });
+
+  // Operator-authenticated: latest sync per operator.
+  app.get("/operators/sync-latest", async (req, reply) => {
+    const token = bearerToken(req.headers.authorization);
+    if (!token) return reply.code(401).send({ error: "MISSING_ACCESS_TOKEN" });
+
+    let payload: { sub: string; typ: string };
+    try {
+      payload = verifyAccessToken(app, token);
+    } catch {
+      return reply.code(401).send({ error: "INVALID_ACCESS_TOKEN" });
+    }
+
+    if (payload.typ !== "access") return reply.code(401).send({ error: "INVALID_ACCESS_TOKEN" });
+
+    // Ensure operator exists (also prevents enumeration if token sub is stale).
+    const me = await prisma.operator.findUnique({ where: { phone: payload.sub } });
+    if (!me) return reply.code(404).send({ error: "OPERATOR_NOT_FOUND" });
+
+    const rows = await prisma.$queryRawUnsafe<
+      {
+        operatorId: string;
+        name: string;
+        lastSyncAt: string | null;
+        deviceId: string | null;
+      }[]
+    >(
+      `
+      with latest as (
+        select distinct on (se.operator_id)
+          se.operator_id::text as "operatorId",
+          se.created_at::text as "lastSyncAt",
+          se.device_id::text as "deviceId"
+        from sync_events se
+        order by se.operator_id asc, se.created_at desc
+      )
+      select
+        o.phone::text as "operatorId",
+        o.name::text as "name",
+        l."lastSyncAt" as "lastSyncAt",
+        l."deviceId" as "deviceId"
+      from operators o
+      left join latest l on l."operatorId" = o.phone::text
+      order by l."lastSyncAt" desc nulls last, o.phone asc
+      `,
+    );
+
+    return reply.send({ rows });
   });
 };

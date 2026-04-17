@@ -38,9 +38,144 @@ function decodeSyncEventsCursor(
   return { createdAt, id: parsed.id };
 }
 
+type ScanEventsCursor = { occurredAt: string; id: string };
+
+function encodeScanEventsCursor(v: { occurredAt: Date; id: string }): string {
+  const payload: ScanEventsCursor = {
+    occurredAt: v.occurredAt.toISOString(),
+    id: v.id,
+  };
+  return Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+}
+
+function decodeScanEventsCursor(
+  cursor: string,
+): { occurredAt: Date; id: string } {
+  const json = Buffer.from(cursor, "base64url").toString("utf8");
+  const parsed = JSON.parse(json) as ScanEventsCursor;
+  if (!parsed?.occurredAt || !parsed?.id) throw new Error("INVALID_CURSOR");
+  const occurredAt = new Date(parsed.occurredAt);
+  if (Number.isNaN(occurredAt.getTime())) throw new Error("INVALID_CURSOR");
+  return { occurredAt, id: parsed.id };
+}
+
 export const analyticsRoutes: FastifyPluginAsync = async (app) => {
   app.addHook("preHandler", async (req) => {
     requireAdmin(req);
+  });
+
+  app.get("/scan-events", async (req, reply) => {
+    let query: {
+      from: Date;
+      to: Date;
+      operatorId?: string;
+      deviceId?: string;
+      operation?: "deposit" | "retrieve";
+      eventType?:
+        | "candidate_scanned"
+        | "rack_scanned"
+        | "deposit_cancelled"
+        | "retrieve_cancelled";
+      limit?: number;
+      cursor?: string;
+    };
+    try {
+      query = z
+        .object({
+          from: z.coerce.date(),
+          to: z.coerce.date(),
+          operatorId: z.string().min(3).optional(),
+          deviceId: z.string().min(1).optional(),
+          operation: z.enum(["deposit", "retrieve"]).optional(),
+          eventType: z.enum([
+            "candidate_scanned",
+            "rack_scanned",
+            "deposit_cancelled",
+            "retrieve_cancelled",
+          ]).optional(),
+          limit: z.coerce.number().int().positive().max(500).optional(),
+          cursor: z.string().min(1).optional(),
+        })
+        .parse(req.query);
+    } catch {
+      return reply.code(400).send({ error: "INVALID_QUERY" });
+    }
+
+    const limit = query.limit ?? 200;
+
+    const clauses: string[] = [`se.occurred_at >= $1`, `se.occurred_at < $2`];
+    const params: any[] = [query.from, query.to];
+    let i = params.length;
+    const add = (clause: string, value: any) => {
+      i += 1;
+      params.push(value);
+      clauses.push(clause.replace("?", `$${i}`));
+    };
+    if (query.operatorId) add(`se.operator_id = ?`, query.operatorId);
+    if (query.deviceId) add(`se.device_id = ?`, query.deviceId);
+    // operation/event_type are enums in Postgres; compare via text to avoid enum/text mismatch.
+    if (query.operation) add(`se.operation::text = ?`, query.operation);
+    if (query.eventType) add(`se.event_type::text = ?`, query.eventType);
+
+    if (query.cursor) {
+      try {
+        const c = decodeScanEventsCursor(query.cursor);
+        params.push(c.occurredAt);
+        params.push(c.id);
+        const occurredAtParam = `$${params.length - 1}`;
+        const idParam = `$${params.length}`;
+        clauses.push(
+          `(se.occurred_at < ${occurredAtParam} or (se.occurred_at = ${occurredAtParam} and se.id < ${idParam}))`,
+        );
+      } catch {
+        return reply.code(400).send({ error: "INVALID_CURSOR" });
+      }
+    }
+
+    const rows = await prisma.$queryRawUnsafe<
+      {
+        id: string;
+        operatorId: string;
+        deviceId: string | null;
+        operation: string;
+        eventType: string;
+        candidateId: string | null;
+        rackId: string | null;
+        occurredAt: string;
+        createdAt: string;
+        metadata: unknown;
+      }[]
+    >(
+      `
+      select
+        se.id::text as "id",
+        se.operator_id::text as "operatorId",
+        se.device_id::text as "deviceId",
+        se.operation::text as "operation",
+        se.event_type::text as "eventType",
+        se.candidate_id::text as "candidateId",
+        se.rack_id::text as "rackId",
+        (se.occurred_at AT TIME ZONE 'UTC')::text as "occurredAt",
+        (se.created_at AT TIME ZONE 'UTC')::text as "createdAt",
+        se.metadata as "metadata"
+      from scan_events se
+      where ${clauses.join(" and ")}
+      order by se.occurred_at desc, se.id desc
+      limit ${limit + 1}
+      `,
+      ...params,
+    );
+
+    const page = rows.slice(0, limit);
+    const nextCursor =
+      rows.length > limit
+        ? encodeScanEventsCursor({
+            occurredAt: new Date(page[page.length - 1]!.occurredAt),
+            id: page[page.length - 1]!.id,
+          })
+        : null;
+
+    return { rows: page, nextCursor };
   });
 
   app.get("/sync/events", async (req, reply) => {
@@ -112,7 +247,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
         se.id::text as "id",
         se.operator_id::text as "operatorId",
         se.device_id::text as "deviceId",
-        se.created_at::text as "createdAt",
+        (se.created_at AT TIME ZONE 'UTC')::text as "createdAt",
         se.mutation_count::int as "mutationCount",
         se.ok_count::int as "okCount",
         se.error_count::int as "errorCount"
@@ -176,7 +311,7 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
       select distinct on (se.operator_id)
         se.operator_id::text as "operatorId",
         se.device_id::text as "deviceId",
-        se.created_at::text as "createdAt",
+        (se.created_at AT TIME ZONE 'UTC')::text as "createdAt",
         se.mutation_count::int as "mutationCount",
         se.ok_count::int as "okCount",
         se.error_count::int as "errorCount"
