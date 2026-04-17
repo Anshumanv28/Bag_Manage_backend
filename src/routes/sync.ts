@@ -7,16 +7,15 @@ import { refreshDuplicateFlagsForKeys } from "../duplicate_flags.js";
 function parseDeviceDate(value: unknown): Date | undefined {
   if (value === undefined || value === null) return undefined;
   if (value instanceof Date) return value;
-  if (typeof value === "number" && Number.isFinite(value)) return new Date(value);
+  if (typeof value === "number" && Number.isFinite(value))
+    return new Date(value);
   if (typeof value !== "string") return undefined;
 
   const t = value.trim();
   if (!t) return undefined;
 
   const hasZone =
-    /[zZ]$/.test(t) ||
-    /[+-]\d{2}(?::?\d{2})?$/.test(t) ||
-    /[+-]\d{4}$/.test(t);
+    /[zZ]$/.test(t) || /[+-]\d{2}(?::?\d{2})?$/.test(t) || /[+-]\d{4}$/.test(t);
   if (hasZone) return new Date(t);
 
   // If the device sends a naive timestamp (no zone), treat it as IST.
