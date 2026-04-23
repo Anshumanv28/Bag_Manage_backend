@@ -103,9 +103,8 @@ function messageOf(e: unknown): string {
 function fixIstSkewForBooking<T extends { createdAt: Date; updatedAt: Date; completedAt: Date | null }>(
   b: T,
 ): T {
-  // Some older device sync payloads sent naive local timestamps (IST) which were
-  // parsed on a UTC server as UTC, making createdAt/completedAt appear ~5h30m
-  // ahead and even after updatedAt (which should never happen).
+  // Legacy rows: naive IST wall times were once interpreted as UTC. New clients send UTC (`Z`).
+  // Keep this adjustment for old data where createdAt > updatedAt by ~IST offset.
   const SHIFT_MS = 330 * 60 * 1000;
   const needsFix = b.createdAt.getTime() > b.updatedAt.getTime() + 60 * 1000;
   if (!needsFix) return b;

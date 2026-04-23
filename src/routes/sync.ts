@@ -18,11 +18,10 @@ function parseDeviceDate(value: unknown): Date | undefined {
     /[zZ]$/.test(t) || /[+-]\d{2}(?::?\d{2})?$/.test(t) || /[+-]\d{4}$/.test(t);
   if (hasZone) return new Date(t);
 
-  // If the device sends a naive timestamp (no zone), treat it as IST.
-  // This avoids server-local timezone differences (UTC vs IST) skewing booking times.
+  // Naive ISO (no Z/offset): treat wall time as UTC to match app contract (Drift + sync use UTC).
   const naive =
     /^(\d{4}-\d{2}-\d{2})[ T](\d{2}:\d{2}(?::\d{2}(?:\.\d+)?)?)$/.exec(t);
-  if (naive) return new Date(`${naive[1]}T${naive[2]}+05:30`);
+  if (naive) return new Date(`${naive[1]}T${naive[2]}Z`);
 
   return new Date(t);
 }
@@ -85,7 +84,6 @@ const MutationSchema = z.discriminatedUnion("type", [
     ]),
     candidateId: z.string().min(1).optional(),
     rackId: z.string().min(1).optional(),
-    // If device sends naive timestamp (no zone), treat it as IST and convert to UTC instant.
     occurredAt: DeviceDate.optional(),
     metadata: z.record(z.string(), z.any()).optional(),
   }),

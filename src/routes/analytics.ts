@@ -2,6 +2,7 @@ import type { FastifyPluginAsync, FastifyRequest } from "fastify";
 import { z } from "zod";
 import { prisma } from "../db.js";
 import { loadEnv } from "../env.js";
+import { parsePostgresTimestampAsUtc } from "../pgTimestamp.js";
 
 const env = loadEnv();
 
@@ -176,20 +177,22 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     );
 
     const page = rows.slice(0, limit);
-    const nextCursor =
-      rows.length > limit
-        ? encodeScanEventsCursor({
-            occurredAt: (() => {
-              const raw = page[page.length - 1]!.occurredAt;
-              const isoish = raw.includes(" ") ? raw.replace(" ", "T") : raw;
-              // If the string already includes an offset/Z, keep it; otherwise assume UTC.
-              const hasZone =
-                /[zZ]$/.test(isoish) || /[+-]\d{2}(:?\d{2})?$/.test(isoish);
-              return new Date(hasZone ? isoish : `${isoish}Z`);
-            })(),
-            id: page[page.length - 1]!.id,
-          })
-        : null;
+    let nextCursor: string | null = null;
+    if (rows.length > limit) {
+      const last = page[page.length - 1]!;
+      const d = parsePostgresTimestampAsUtc(last.occurredAt);
+      if (Number.isNaN(d.getTime())) {
+        req.log.warn(
+          { raw: last.occurredAt },
+          "scan-events: omitted nextCursor (unparseable occurredAt)",
+        );
+      } else {
+        nextCursor = encodeScanEventsCursor({
+          occurredAt: d,
+          id: last.id,
+        });
+      }
+    }
 
     return { rows: page, nextCursor };
   });
@@ -276,13 +279,22 @@ export const analyticsRoutes: FastifyPluginAsync = async (app) => {
     );
 
     const page = rows.slice(0, limit);
-    const nextCursor =
-      rows.length > limit
-        ? encodeSyncEventsCursor({
-            createdAt: new Date(page[page.length - 1]!.createdAt),
-            id: page[page.length - 1]!.id,
-          })
-        : null;
+    let nextCursor: string | null = null;
+    if (rows.length > limit) {
+      const last = page[page.length - 1]!;
+      const d = parsePostgresTimestampAsUtc(last.createdAt);
+      if (Number.isNaN(d.getTime())) {
+        req.log.warn(
+          { raw: last.createdAt },
+          "sync/events: omitted nextCursor (unparseable createdAt)",
+        );
+      } else {
+        nextCursor = encodeSyncEventsCursor({
+          createdAt: d,
+          id: last.id,
+        });
+      }
+    }
 
     return { rows: page, nextCursor };
   });
